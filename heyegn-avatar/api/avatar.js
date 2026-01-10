@@ -1,63 +1,78 @@
 const axios = require('axios');
 
 module.exports = async (req, res) => {
-  // CORS headers - разреши все запросы
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Content-Type', 'application/json');
   
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // Получи API Key из environment
   const apiKey = process.env.HEYGEN_API_KEY;
   
   if (!apiKey || apiKey === '@heygen_api_key') {
     return res.status(400).json({ 
-      error: 'API Key not configured',
-      message: 'Add HEYGEN_API_KEY to Vercel Environment Variables',
-      currentValue: apiKey || 'UNDEFINED'
+      error: 'HEYGEN_API_KEY не установлен на Vercel!',
+      hint: 'Settings → Environment Variables → добавь HEYGEN_API_KEY'
     });
   }
 
-  // Параметры из URL
-  const { 
-    avatarId = 'Wayne20240711', 
-    voiceId = 'en_US-neural', 
-    initialText = '', 
-    quality = 'high' 
-  } = req.query;
-
-  console.log('Request received:', { avatarId, voiceId, initialText });
+  const { avatarId = 'Wayne20240711', voiceId = 'en_US-neutral', initialText = '' } = req.query;
 
   try {
-    // ШАГ 1: Создание сессии
-    console.log('[1/4] Creating HeyGen session...');
-    
-    const sessionResponse = await axios.post(
+    // Создание сессии
+    const session = await axios.post(
       'https://api.heygen.com/v1/streaming.new',
       {
         version: 'v2',
         avatar_name: avatarId,
-        voice: {
-          voice_id: voiceId
-        },
-        quality: quality,
+        voice: { voice_id: voiceId },
+        quality: 'high',
         video_encoding: 'H264'
       },
       {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         timeout: 30000
       }
     );
 
-    if (!sessionResponse.data.data) {
-      throw new Error('Invalid response from HeyGen API');
+    const sessionId = session.data.data.session_id;
+    const accessToken = session.data.data.access_token;
+    const liveKitUrl = session.data.data.url;
+
+    // Старт сессии
+    await axios.post(
+      'https://api.heygen.com/v1/streaming.start',
+      { session_id: sessionId },
+      { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, timeout: 30000 }
+    );
+
+    // Отправка начального текста (если есть)
+    if (initialText && initialText.trim()) {
+      axios.post(
+        'https://api.heygen.com/v1/streaming.task',
+        { session_id: sessionId, text: initialText, task_type: 'talk' },
+        { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, timeout: 10000 }
+      ).catch(() => {});
     }
 
-    const sessionData = sessionResponse.data.data;
-    const sessionId = sessionData.session_id;
-    console.log('[1/4] Session c
+    // Генерируем URL на avatar-page (это будет обслуживать HTML)
+    const protocol = req.headers['x-forwarded-proto'] || 'https';
+    const host = req.headers.host;
+    const htmlUrl = `${protocol}://${host}/api/avatar-page?sessionId=${encodeURIComponent(sessionId)}&accessToken=${encodeURIComponent(accessToken)}&liveKitUrl=${encodeURIComponent(liveKitUrl)}`;
+
+    res.status(200).json({
+      success: true,
+      sessionId,
+      htmlUrl,
+      accessToken,
+      liveKitUrl
+    });
+
+  } catch (error) {
+    console.error('Error:', error.message);
+    res.status(error.response?.status || 500).json({
+      success: false,
+      error: error.response?.data?.error || error.message
+    });
+  }
+};
