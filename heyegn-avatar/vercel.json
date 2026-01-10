@@ -2,5 +2,6 @@
   "buildCommand": "npm install",
   "env": {
     "HEYGEN_API_KEY": "@heygen_api_key"
-  }
+  },
+  "public": true
 }
